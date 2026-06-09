@@ -22,15 +22,26 @@ interface BoardingPassDao {
     }
 
     @Transaction
-    @Query("SELECT * FROM boarding_passes ORDER BY scannedAt DESC")
-    fun getAllBoardingPasses(): Flow<List<BoardingPassWithLegs>>
+    @Query("SELECT * FROM boarding_passes WHERE archived = :archived ORDER BY scannedAt DESC")
+    fun getBoardingPasses(archived: Boolean = false): Flow<List<BoardingPassWithLegs>>
 
     @Transaction
     @Query("SELECT * FROM boarding_passes WHERE id = :id")
     suspend fun getBoardingPassById(id: Long): BoardingPassWithLegs?
 
+    @Transaction
+    @Query("SELECT * FROM boarding_passes WHERE id IN (:ids) ORDER BY scannedAt DESC")
+    suspend fun getBoardingPassesByIds(ids: List<Long>): List<BoardingPassWithLegs>
+
+    @Transaction
+    @Query("SELECT * FROM boarding_passes WHERE rawBarcode = :rawBarcode LIMIT 1")
+    suspend fun getBoardingPassByRawBarcode(rawBarcode: String): BoardingPassWithLegs?
+
     @Query("DELETE FROM boarding_passes WHERE id = :id")
     suspend fun deleteBoardingPass(id: Long)
+
+    @Query("UPDATE boarding_passes SET archived = :archived WHERE id = :id")
+    suspend fun setArchived(id: Long, archived: Boolean)
 
     @Query("SELECT EXISTS(SELECT 1 FROM boarding_passes WHERE rawBarcode = :rawBarcode LIMIT 1)")
     suspend fun existsByRawBarcode(rawBarcode: String): Boolean

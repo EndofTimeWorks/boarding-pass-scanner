@@ -6,6 +6,8 @@ import android.view.ScaleGestureDetector
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
@@ -57,6 +59,15 @@ import eu.espcaa.boardingpassscanner.parser.JulianBoardingPass
 import eu.espcaa.boardingpassscanner.parser.ParseBCBP
 import kotlinx.coroutines.launch
 
+fun boardingPassBarcodeScannerOptions(): com.google.mlkit.vision.barcode.BarcodeScannerOptions {
+    return com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+        .setBarcodeFormats(
+            com.google.mlkit.vision.barcode.common.Barcode.FORMAT_PDF417,
+            com.google.mlkit.vision.barcode.common.Barcode.FORMAT_AZTEC,
+            com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE
+        )
+        .build()
+}
 
 @SuppressLint("DefaultLocale")
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -136,8 +147,10 @@ fun BarcodeTracker(
 @Composable
 fun BoardingPassScanner(
     onSuccess: suspend (JulianBoardingPass, String) -> Boolean,
+    onScanFailure: (String, BCBPParseResult) -> Unit = { _, _ -> },
     overlayContent: @Composable (BoxScope.() -> Unit) = {},
     canScan: Boolean = true,
+    onImagePickClick: (() -> Unit)? = null,
 ) {
 
     var rotationDegrees by remember { mutableIntStateOf(0) }
@@ -216,14 +229,10 @@ fun BoardingPassScanner(
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
-        val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
-            .setBarcodeFormats(
-                com.google.mlkit.vision.barcode.common.Barcode.FORMAT_PDF417,
-                com.google.mlkit.vision.barcode.common.Barcode.FORMAT_AZTEC,
-                com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE
+        val barcodeScanner =
+            com.google.mlkit.vision.barcode.BarcodeScanning.getClient(
+                boardingPassBarcodeScannerOptions()
             )
-            .build()
-        val barcodeScanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
         val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
             .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
@@ -259,6 +268,8 @@ fun BoardingPassScanner(
                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             }
                                         }
+                                    }, onFailure = { failedRawData, result ->
+                                        onScanFailure(failedRawData, result)
                                     })
                                 }
                             }
@@ -352,9 +363,28 @@ fun BoardingPassScanner(
                     .padding(vertical = 32.dp)
                     .navigationBarsPadding()
                     .fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onImagePickClick != null) {
+                    IconButton(
+                        onClick = onImagePickClick,
+                        modifier = Modifier.size(96.dp),
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = colorScheme.secondary,
+                            contentColor = colorScheme.onSecondary
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Image,
+                            contentDescription = "Scan from image",
+                            modifier = Modifier.size(32.dp),
+                            tint = colorScheme.onSecondary
+                        )
+                    }
+                }
+
                 IconButton(
                     onClick = {
                         isFlashlightOn = !isFlashlightOn
@@ -383,11 +413,16 @@ fun BoardingPassScanner(
     }
 }
 
-fun handleSuccessfulScan(rawData: String, onSuccess: (JulianBoardingPass) -> Unit = {}) {
+fun handleSuccessfulScan(
+    rawData: String,
+    onSuccess: (JulianBoardingPass) -> Unit = {},
+    onFailure: (String, BCBPParseResult) -> Unit = { _, _ -> }
+) {
     val bcbpParseResult: BCBPParseResult = ParseBCBP(rawData)
     if (bcbpParseResult.errors.isEmpty() && bcbpParseResult.boardingPass != null) {
         onSuccess(bcbpParseResult.boardingPass)
     } else {
         Log.e("ScanScreen", "Failed to parse boarding pass: ${bcbpParseResult.errors}")
+        onFailure(rawData, bcbpParseResult)
     }
 }

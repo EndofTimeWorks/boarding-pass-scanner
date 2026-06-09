@@ -12,5 +12,6 @@ data class BoardingPassEntity(
     val isEticket: Boolean,
     val year: Int,
     val rawBarcode: String,
-    val scannedAt: Long = System.currentTimeMillis()
+    val scannedAt: Long = System.currentTimeMillis(),
+    val archived: Boolean = false
 )

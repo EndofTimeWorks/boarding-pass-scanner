@@ -1,6 +1,10 @@
 package eu.espcaa.boardingpassscanner.screens
 
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.core.content.FileProvider
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -25,9 +29,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.AirplaneTicket
 import androidx.compose.material.icons.automirrored.outlined.AirplaneTicket
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +71,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
 import coil3.compose.AsyncImage
@@ -72,20 +80,32 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamicColorScheme
+import eu.espcaa.boardingpassscanner.R
 import eu.espcaa.boardingpassscanner.data.BoardingPassDao
 import eu.espcaa.boardingpassscanner.data.BoardingPassWithLegs
 import eu.espcaa.boardingpassscanner.utils.AirlineColorCache
 import eu.espcaa.boardingpassscanner.utils.AirlineManager
 import eu.espcaa.boardingpassscanner.utils.AirportManager
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import java.io.File
 
 data class Screen(
     val name: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
+    val archived: Boolean = false,
     val content: @Composable (innerPadding: PaddingValues) -> Unit
 )
+
+private val BoardingPassExportJson = Json {
+    prettyPrint = true
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,7 +146,26 @@ fun HomeScreen(
                     toggleSelection(it)
                 },
                 selectedPassesIds = selectedPassesIds,
-                isSelectionMode = isSelectionMode
+                isSelectionMode = isSelectionMode,
+                archived = false
+            )
+        },
+        Screen(
+            "Archive",
+            Icons.Filled.Archive,
+            Icons.Outlined.Archive,
+            archived = true
+        ) {
+            HomeContent(
+                it,
+                searchQuery = activeQuery,
+                onPassClick = onPassClick,
+                toggleSelection = {
+                    toggleSelection(it)
+                },
+                selectedPassesIds = selectedPassesIds,
+                isSelectionMode = isSelectionMode,
+                archived = true
             )
         },
     )
@@ -137,6 +176,7 @@ fun HomeScreen(
 
     val dao: BoardingPassDao = koinInject()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     var selectedIndex by rememberSaveable { mutableStateOf(0) }
     val currentScreen = screens[selectedIndex]
@@ -187,56 +227,147 @@ fun HomeScreen(
             }
         }
 
-        if (currentScreen.name == "Library") {
-            if (isSelectionMode == true) {
-                TopAppBar(
-                    title = { Text("${selectedPassesIds.size} selected") },
-                    navigationIcon = {
-                        IconButton(onClick = { selectedPassesIds = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = null)
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            scope.launch {
-                                selectedPassesIds.forEach { id -> dao.deleteBoardingPass(id) }
-                                selectedPassesIds = emptySet()
-                            }
-
-                        }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                )
-            } else {
-                SearchBarOverlay(
-                    query = query,
-                    onQueryChange = {
-                        query = it
-                        activeQuery = it
-                    },
-                    expanded = expanded,
-                    onExpandedChange = { expanded = it },
-                    searchHistory = searchHistory,
-                    onSearch = { searchText ->
-                        activeQuery = searchText
-                        expanded = false
-                        if (searchText.isNotBlank() && !searchHistory.contains(searchText)) {
-                            searchHistory = (listOf(searchText) + searchHistory).take(10)
-                        }
-                    },
-                    onClear = {
-                        query = ""
-                        activeQuery = ""
+        if (isSelectionMode == true) {
+            TopAppBar(
+                title = { Text("${selectedPassesIds.size} selected") },
+                navigationIcon = {
+                    IconButton(onClick = { selectedPassesIds = emptySet() }) {
+                        Icon(Icons.Default.Close, contentDescription = null)
                     }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            val selectedPasses = dao.getBoardingPassesByIds(selectedPassesIds.toList())
+                            if (selectedPasses.isEmpty()) {
+                                Toast.makeText(context, "No passes selected", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
+                            shareBoardingPassesJson(context, selectedPasses)
+                        }
+                    }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_download),
+                            contentDescription = "Export JSON"
+                        )
+                    }
+                    IconButton(onClick = {
+                        scope.launch {
+                            selectedPassesIds.forEach { id ->
+                                dao.setArchived(id, archived = !currentScreen.archived)
+                            }
+                            selectedPassesIds = emptySet()
+                        }
+
+                    }) {
+                        Icon(
+                            if (currentScreen.archived) Icons.Default.Unarchive else Icons.Default.Archive,
+                            contentDescription = if (currentScreen.archived) "Restore" else "Archive"
+                        )
+                    }
+                    IconButton(onClick = {
+                        scope.launch {
+                            selectedPassesIds.forEach { id -> dao.deleteBoardingPass(id) }
+                            selectedPassesIds = emptySet()
+                        }
+
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
                 )
-            }
+            )
+        } else {
+            SearchBarOverlay(
+                query = query,
+                onQueryChange = {
+                    query = it
+                    activeQuery = it
+                },
+                expanded = expanded,
+                onExpandedChange = { expanded = it },
+                searchHistory = searchHistory,
+                onSearch = { searchText ->
+                    activeQuery = searchText
+                    expanded = false
+                    if (searchText.isNotBlank() && !searchHistory.contains(searchText)) {
+                        searchHistory = (listOf(searchText) + searchHistory).take(10)
+                    }
+                },
+                onClear = {
+                    query = ""
+                    activeQuery = ""
+                }
+            )
         }
 
     }
+}
+
+fun shareBoardingPassesJson(
+    context: Context,
+    passes: List<BoardingPassWithLegs>
+) {
+    val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
+    val exportFile = File(exportDir, "boarding-passes-${System.currentTimeMillis()}.json")
+    exportFile.writeText(boardingPassesToJson(passes))
+
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        exportFile
+    )
+
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/json"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, "Export boarding passes"))
+}
+
+fun boardingPassesToJson(passes: List<BoardingPassWithLegs>): String {
+    val root = buildJsonObject {
+        put("schemaVersion", JsonPrimitive(1))
+        put("exportedAt", JsonPrimitive(System.currentTimeMillis()))
+        put(
+            "boardingPasses",
+            JsonArray(passes.map { pass ->
+                buildJsonObject {
+                    put("id", JsonPrimitive(pass.boardingPass.id))
+                    put("passengerName", JsonPrimitive(pass.boardingPass.passengerName))
+                    put("pnrCode", JsonPrimitive(pass.boardingPass.pnrCode))
+                    put("numberOfLegs", JsonPrimitive(pass.boardingPass.numberOfLegs))
+                    put("isEticket", JsonPrimitive(pass.boardingPass.isEticket))
+                    put("year", JsonPrimitive(pass.boardingPass.year))
+                    put("rawBarcode", JsonPrimitive(pass.boardingPass.rawBarcode))
+                    put("scannedAt", JsonPrimitive(pass.boardingPass.scannedAt))
+                    put("archived", JsonPrimitive(pass.boardingPass.archived))
+                    put(
+                        "legs",
+                        JsonArray(pass.legs.map { leg ->
+                            JsonObject(
+                                mapOf(
+                                    "from" to JsonPrimitive(leg.from),
+                                    "to" to JsonPrimitive(leg.to),
+                                    "carrier" to JsonPrimitive(leg.carrier),
+                                    "flightNumber" to JsonPrimitive(leg.flightNumber),
+                                    "flightJulian" to JsonPrimitive(leg.flightJulian),
+                                    "seat" to JsonPrimitive(leg.seat),
+                                    "sequenceNumber" to JsonPrimitive(leg.sequenceNumber),
+                                    "compartmentCode" to JsonPrimitive(leg.compartmentCode)
+                                )
+                            )
+                        })
+                    )
+                }
+            })
+        )
+    }
+
+    return BoardingPassExportJson.encodeToString(JsonObject.serializer(), root)
 }
 
 
@@ -248,7 +379,8 @@ fun HomeContent(
     onPassClick: (String, Int) -> Unit = { _, _ -> },
     toggleSelection: (Long) -> Unit = { _ -> },
     selectedPassesIds: Set<Long> = emptySet(),
-    isSelectionMode: Boolean = false
+    isSelectionMode: Boolean = false,
+    archived: Boolean = false
 ) {
 
     val dao: BoardingPassDao = koinInject()
@@ -256,7 +388,7 @@ fun HomeContent(
     val colorCache: AirlineColorCache = koinInject()
     val isDarkTheme = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
-    val allPasses by dao.getAllBoardingPasses().collectAsState(initial = emptyList())
+    val allPasses by dao.getBoardingPasses(archived).collectAsState(initial = emptyList())
     val airlineColors by colorCache.colors.collectAsState()
 
     LaunchedEffect(isDarkTheme) {
@@ -291,7 +423,10 @@ fun HomeContent(
             modifier = Modifier.padding(horizontal = 16.dp)
         ) {
             if (allPasses.isEmpty()) {
-                BoardingPassesPlaceholder()
+                BoardingPassesPlaceholder(
+                    title = if (archived) "Archive is empty" else "No boarding passes yet",
+                    subtitle = if (archived) "Archived passes will show up here." else "Scan your first one to get started!"
+                )
             } else if (passes.isEmpty()) {
                 Text("No results for \"$searchQuery\"")
             } else {
@@ -568,6 +703,18 @@ fun HomeBottomBar(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun BoardingPassesPlaceholder() {
+    BoardingPassesPlaceholder(
+        title = "No boarding passes yet",
+        subtitle = "Scan your first one to get started!"
+    )
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun BoardingPassesPlaceholder(
+    title: String,
+    subtitle: String
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -596,12 +743,12 @@ fun BoardingPassesPlaceholder() {
             }
             Column(modifier = Modifier.padding(start = 16.dp)) {
                 Text(
-                    text = "No boarding passes yet",
+                    text = title,
                     style = MaterialTheme.typography.titleMediumEmphasized,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
                 Text(
-                    text = "Scan your first one to get started!",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
                     modifier = Modifier.padding(top = 4.dp)

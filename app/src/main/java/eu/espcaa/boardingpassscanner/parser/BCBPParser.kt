@@ -55,6 +55,41 @@ data class BCBPParseResult(
     val errors: List<Error>
 )
 
+private const val UNIQUE_MANDATORY_LENGTH = 23
+private const val MANDATORY_LEG_LENGTH = 35
+
+private data class ParsedMandatoryLeg(
+    val pnrCode: String,
+    val leg: JulianLeg
+)
+
+private fun parseMandatoryLeg(rawData: String, start: Int): ParsedMandatoryLeg {
+    val pnrCode = rawData.substring(start, start + 7).trim()
+    val departure = rawData.substring(start + 7, start + 10)
+    val arrival = rawData.substring(start + 10, start + 13)
+    val carrier = rawData.substring(start + 13, start + 16).trim()
+    val flightNumber = rawData.substring(start + 16, start + 21).trim()
+    val flightJulian = rawData.substring(start + 21, start + 24)
+    val compartmentCode = rawData[start + 24].toString()
+    val seat = rawData.substring(start + 25, start + 29).trim()
+    val sequence = rawData.substring(start + 29, start + 34).trim()
+
+    return ParsedMandatoryLeg(
+        pnrCode = pnrCode,
+        leg = JulianLeg(
+            from = departure,
+            to = arrival,
+            carrier = carrier,
+            flightNumber = flightNumber,
+            flightJulian = flightJulian,
+            flightDateJulian = flightJulian,
+            seat = seat,
+            sequenceNumber = sequence,
+            compartmentCode = compartmentCode,
+        )
+    )
+}
+
 
 fun ParseIATADate(julianDate: String, currentYear: Int = LocalDate.now().year): LocalDate? {
     return try {
@@ -78,11 +113,11 @@ fun ParseBCBP(rawData: String): BCBPParseResult {
 
     try {
 
-        if (rawData.length < 60 || rawData[0] != 'M') {
+        if (rawData.length < UNIQUE_MANDATORY_LENGTH || rawData[0] != 'M') {
             errors.add(
                 Error(
                     "Invalid format",
-                    "Not enough characters or does not start with 'M', rawData: $rawData"
+                    "Not enough characters for mandatory unique data or does not start with 'M', rawData: $rawData"
                 )
             )
             return BCBPParseResult(null, errors)
@@ -98,77 +133,30 @@ fun ParseBCBP(rawData: String): BCBPParseResult {
             return BCBPParseResult(null, errors)
         }
 
+        val requiredLength = UNIQUE_MANDATORY_LENGTH + (numberOfLegs * MANDATORY_LEG_LENGTH)
+        if (rawData.length < requiredLength) {
+            errors.add(
+                Error(
+                    "Invalid format",
+                    "Not enough characters for $numberOfLegs mandatory leg(s), expected at least $requiredLength, got ${rawData.length}"
+                )
+            )
+            return BCBPParseResult(null, errors)
+        }
+
         val passengerName = rawData.substring(2, 22).trim()
         val isEticket = rawData[22] == 'E'
-        val pnrCode = rawData.substring(23, 30).trim()
-        val firstFlightDeparture = rawData.substring(30, 33)
-        val firstFlightArrival = rawData.substring(33, 36)
-        val firstFlightCarrier = rawData.substring(36, 39).trim()
-        val firstFlightNumber = rawData.substring(39, 44).trim()
-        val firstFlightJulian = rawData.substring(44, 47)
-        val compartmentCode = rawData[47].toString()
-        val firstFlightSeat = rawData.substring(48, 52).trim()
-        val firstFlightSequence = rawData.substring(51, 56).trim()
 
-        legs.add(
-            JulianLeg(
-                from = firstFlightDeparture,
-                to = firstFlightArrival,
-                carrier = firstFlightCarrier,
-                flightNumber = firstFlightNumber,
-                flightJulian = firstFlightJulian,
-                flightDateJulian = firstFlightJulian,
-                seat = firstFlightSeat,
-                sequenceNumber = firstFlightSequence,
-                compartmentCode = compartmentCode,
-            )
-        )
+        var pnrCode = ""
+        var pointer = UNIQUE_MANDATORY_LENGTH
 
-        var pointer = 58
-
-        repeat(numberOfLegs - 1) { i ->
-            val hex = rawData.substring(pointer, pointer + 2)
-            val legLength = hex.toIntOrNull(16) ?: run {
-                errors.add(
-                    Error(
-                        "Invalid leg length",
-                        "Expected a 2-digit hex number at position $pointer, got '$hex'"
-                    )
-                )
-                return BCBPParseResult(null, errors)
+        repeat(numberOfLegs) { index ->
+            val parsedLeg = parseMandatoryLeg(rawData, pointer)
+            if (index == 0) {
+                pnrCode = parsedLeg.pnrCode
             }
-
-            // move ahead of the hex length field
-            pointer += 2
-
-            // move ahead of the leg data + skip the pnr code for now (7 chars)
-            pointer += legLength + 7
-
-            val legDeparture = rawData.substring(pointer, pointer + 3)
-            val legArrival = rawData.substring(pointer + 3, pointer + 6)
-            val legCarrier = rawData.substring(pointer + 6, pointer + 9).trim()
-            val legFlightNumber = rawData.substring(pointer + 9, pointer + 14).trim()
-            val legFlightJulian = rawData.substring(pointer + 14, pointer + 17)
-            val legCompartmentCode = rawData[pointer + 17].toString()
-            val legSeat = rawData.substring(pointer + 18, pointer + 22).trim()
-            val legSequence = rawData.substring(pointer + 21, pointer + 26).trim()
-
-            // go to next leg :)
-            pointer += 28
-
-            legs.add(
-                JulianLeg(
-                    from = legDeparture,
-                    to = legArrival,
-                    carrier = legCarrier,
-                    flightNumber = legFlightNumber,
-                    flightJulian = legFlightJulian,
-                    flightDateJulian = legFlightJulian,
-                    seat = legSeat,
-                    sequenceNumber = legSequence,
-                    compartmentCode = legCompartmentCode,
-                )
-            )
+            legs.add(parsedLeg.leg)
+            pointer += MANDATORY_LEG_LENGTH
         }
 
         val boardingPass = JulianBoardingPass(
