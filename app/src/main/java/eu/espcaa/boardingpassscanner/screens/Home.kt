@@ -39,6 +39,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,7 +54,6 @@ import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.toShape
@@ -478,7 +479,14 @@ fun ArchiveFooterButton(
             .padding(top = 8.dp, bottom = 96.dp),
         horizontalArrangement = Arrangement.Center
     ) {
-        TextButton(onClick = onClick) {
+        FilledTonalButton(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        ) {
             Icon(
                 if (archived) Icons.AutoMirrored.Outlined.AirplaneTicket else Icons.Outlined.Archive,
                 contentDescription = null,
