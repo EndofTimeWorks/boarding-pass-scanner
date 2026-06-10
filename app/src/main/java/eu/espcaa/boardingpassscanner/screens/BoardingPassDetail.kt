@@ -25,6 +25,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AirplanemodeActive
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -39,9 +41,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,12 +64,15 @@ import androidx.core.graphics.createBitmap
 import androidx.core.graphics.set
 import coil3.compose.AsyncImage
 import com.google.zxing.aztec.AztecWriter
+import eu.espcaa.boardingpassscanner.data.BoardingPassDao
+import eu.espcaa.boardingpassscanner.data.BoardingPassWithLegs
 import eu.espcaa.boardingpassscanner.parser.ConvertToBoardingPass
 import eu.espcaa.boardingpassscanner.parser.Leg
 import eu.espcaa.boardingpassscanner.parser.ParseBCBP
 import eu.espcaa.boardingpassscanner.utils.AirlineColorCache
 import eu.espcaa.boardingpassscanner.utils.AirlineManager
 import eu.espcaa.boardingpassscanner.utils.AirportManager
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -80,6 +89,7 @@ fun BoardingDetailScreen(
     airlineManager: AirlineManager = koinInject(),
     airportManager: AirportManager = koinInject(),
     colorCache: AirlineColorCache = koinInject(),
+    boardingPassDao: BoardingPassDao = koinInject(),
     onBack: () -> Unit,
 ) {
     val parsed = remember(rawBarcode) { ParseBCBP(rawBarcode) }
@@ -92,6 +102,12 @@ fun BoardingDetailScreen(
     val carrier = boardingPass.legs.first().carrier
     val airlineColors by colorCache.colors.collectAsState()
     val airlineColorScheme = airlineColors[carrier]
+    val scope = rememberCoroutineScope()
+    var savedPass by remember(rawBarcode) { mutableStateOf<BoardingPassWithLegs?>(null) }
+
+    LaunchedEffect(rawBarcode) {
+        savedPass = boardingPassDao.getBoardingPassByRawBarcode(rawBarcode)
+    }
 
     val infiniteTransition = rememberInfiniteTransition()
     val angle by infiniteTransition.animateFloat(
@@ -123,6 +139,31 @@ fun BoardingDetailScreen(
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        savedPass?.let { pass ->
+                            val archived = pass.boardingPass.archived
+                            IconButton(
+                                onClick = {
+                                    scope.launch {
+                                        boardingPassDao.setArchived(
+                                            pass.boardingPass.id,
+                                            archived = !archived
+                                        )
+                                        savedPass = pass.copy(
+                                            boardingPass = pass.boardingPass.copy(
+                                                archived = !archived
+                                            )
+                                        )
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    if (archived) Icons.Default.Unarchive else Icons.Default.Archive,
+                                    contentDescription = if (archived) "Restore" else "Archive"
+                                )
+                            }
                         }
                     },
                     scrollBehavior = scrollBehavior,

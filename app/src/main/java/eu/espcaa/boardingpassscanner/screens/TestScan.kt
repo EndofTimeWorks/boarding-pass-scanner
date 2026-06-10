@@ -66,7 +66,6 @@ import coil3.compose.AsyncImage
 import eu.espcaa.boardingpassscanner.R
 import eu.espcaa.boardingpassscanner.data.BoardingPassDao
 import eu.espcaa.boardingpassscanner.data.BoardingPassEntity
-import eu.espcaa.boardingpassscanner.data.BoardingPassWithLegs
 import eu.espcaa.boardingpassscanner.data.LegEntity
 import eu.espcaa.boardingpassscanner.parser.JulianBoardingPass
 import eu.espcaa.boardingpassscanner.parser.JulianLeg
@@ -112,22 +111,16 @@ fun TestScanner(
         var scannedPass by remember { mutableStateOf<JulianBoardingPass?>(null) }
         var scannedRawBarcode by remember { mutableStateOf("") }
         var showSheet by remember { mutableStateOf(false) }
-        var duplicatePass by remember { mutableStateOf<BoardingPassWithLegs?>(null) }
-        var showDuplicateSheet by remember { mutableStateOf(false) }
+        var isScannedPassSaved by remember { mutableStateOf(false) }
 
         val showPass: (JulianBoardingPass, String) -> Unit = { pass, rawData ->
             scope.launch {
                 val existingPass = boardingPassDao.getBoardingPassByRawBarcode(rawData)
-                if (existingPass == null) {
-                    scannedPass = pass
-                    scannedRawBarcode = rawData
-                    showSheet = true
-                    currentRawData.value = rawData
-                } else {
-                    duplicatePass = existingPass
-                    showDuplicateSheet = true
-                    currentRawData.value = rawData
-                }
+                scannedPass = pass
+                scannedRawBarcode = rawData
+                isScannedPassSaved = existingPass != null
+                showSheet = true
+                currentRawData.value = rawData
             }
         }
 
@@ -168,50 +161,17 @@ fun TestScanner(
 
         BoardingPassScanner(
             onSuccess = { pass, rawData ->
-                val existingPass = boardingPassDao.getBoardingPassByRawBarcode(rawData)
-                if (existingPass == null) {
-                    showPass(pass, rawData)
-                    true
-                } else {
-                    duplicatePass = existingPass
-                    showDuplicateSheet = true
-                    currentRawData.value = rawData
-                    false
-                }
+                showPass(pass, rawData)
+                true
             },
             overlayContent = {},
-            canScan = !showSheet && !showDuplicateSheet,
+            canScan = !showSheet,
             onImagePickClick = {
                 imagePickerLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                 )
             },
         )
-
-        if (showDuplicateSheet && duplicatePass != null) {
-            ModalBottomSheet(onDismissRequest = { showDuplicateSheet = false }) {
-                DuplicatePassSheetContent(
-                    pass = duplicatePass!!,
-                    airportManager = airportManager,
-                    onOpen = {
-                        onOpenPass(
-                            duplicatePass!!.boardingPass.rawBarcode,
-                            duplicatePass!!.boardingPass.year
-                        )
-                    },
-                    onArchiveToggle = {
-                        scope.launch {
-                            val pass = duplicatePass ?: return@launch
-                            boardingPassDao.setArchived(
-                                pass.boardingPass.id,
-                                archived = !pass.boardingPass.archived
-                            )
-                            showDuplicateSheet = false
-                        }
-                    }
-                )
-            }
-        }
 
         if (showSheet && scannedPass != null) {
             ModalBottomSheet(onDismissRequest = { showSheet = false }) {
@@ -244,13 +204,10 @@ fun TestScanner(
                                 )
                             }
                             boardingPassDao.insertBoardingPassWithLegs(entity, legs)
+                            isScannedPassSaved = true
                         }
                     },
-                    onDelete = {
-                        scope.launch {
-                            boardingPassDao.deleteByRawBarcode(scannedRawBarcode)
-                        }
-                    },
+                    initiallySaved = isScannedPassSaved,
                     onOpen = {
                         onOpenPass(
                             currentRawData.value ?: "",
@@ -296,53 +253,6 @@ fun TestScanner(
     }
 }
 
-@Composable
-fun DuplicatePassSheetContent(
-    pass: BoardingPassWithLegs,
-    airportManager: AirportManager,
-    onOpen: () -> Unit,
-    onArchiveToggle: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(
-            text = "Already scanned",
-            style = MaterialTheme.typography.headlineSmall
-        )
-        Text(
-            text = "${pass.boardingPass.passengerName.replace("/", " ")} · ${pass.boardingPass.pnrCode}",
-            style = MaterialTheme.typography.bodyLarge
-        )
-        pass.legs.firstOrNull()?.let { leg ->
-            Text(
-                text = "${airportManager.getCity(leg.from)} → ${airportManager.getCity(leg.to)}",
-                style = MaterialTheme.typography.titleMedium
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Button(
-                onClick = onOpen,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Open")
-            }
-            Button(
-                onClick = onArchiveToggle,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(if (pass.boardingPass.archived) "Restore" else "Archive")
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ResultSheetContent(
@@ -350,7 +260,7 @@ fun ResultSheetContent(
     airlineManager: AirlineManager,
     airportManager: AirportManager,
     onSave: (JulianBoardingPass) -> Unit = {},
-    onDelete: () -> Unit = {},
+    initiallySaved: Boolean = false,
     onOpen: () -> Unit
 ) {
     Column(
@@ -391,14 +301,13 @@ fun ResultSheetContent(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.Top
             ) {
-                var isSaved by remember { mutableStateOf(false) }
+                var isSaved by remember(boardingPass, initiallySaved) {
+                    mutableStateOf(initiallySaved)
+                }
 
                 Button(
                     onClick = {
-                        if (isSaved) {
-                            onDelete()
-                            isSaved = false
-                        } else {
+                        if (!isSaved) {
                             onSave(boardingPass)
                             isSaved = true
                         }

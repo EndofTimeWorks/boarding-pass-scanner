@@ -52,6 +52,7 @@ import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.toShape
@@ -131,6 +132,8 @@ fun HomeScreen(
         }
     }
 
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+
     val screens = listOf(
         Screen(
             "Library",
@@ -147,25 +150,11 @@ fun HomeScreen(
                 },
                 selectedPassesIds = selectedPassesIds,
                 isSelectionMode = isSelectionMode,
-                archived = false
-            )
-        },
-        Screen(
-            "Archive",
-            Icons.Filled.Archive,
-            Icons.Outlined.Archive,
-            archived = true
-        ) {
-            HomeContent(
-                it,
-                searchQuery = activeQuery,
-                onPassClick = onPassClick,
-                toggleSelection = {
-                    toggleSelection(it)
+                archived = showArchived,
+                onArchiveFooterClick = {
+                    selectedPassesIds = emptySet()
+                    showArchived = !showArchived
                 },
-                selectedPassesIds = selectedPassesIds,
-                isSelectionMode = isSelectionMode,
-                archived = true
             )
         },
     )
@@ -188,19 +177,8 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize()
     ) {
         Scaffold(
-            bottomBar = {
-                if (!isSearchExpanded) {
-                    HomeBottomBar(
-                        screens,
-                        currentScreen,
-                        onScreenSelected = { index ->
-                            selectedIndex = index
-                        },
-                    )
-                }
-            },
             floatingActionButton = {
-                if (currentScreen.name == "Library" && !isSearchExpanded) {
+                if (!showArchived && !isSearchExpanded) {
                     Box(
                         modifier = Modifier
                             .padding(16.dp)
@@ -254,15 +232,15 @@ fun HomeScreen(
                     IconButton(onClick = {
                         scope.launch {
                             selectedPassesIds.forEach { id ->
-                                dao.setArchived(id, archived = !currentScreen.archived)
+                                dao.setArchived(id, archived = !showArchived)
                             }
                             selectedPassesIds = emptySet()
                         }
 
                     }) {
                         Icon(
-                            if (currentScreen.archived) Icons.Default.Unarchive else Icons.Default.Archive,
-                            contentDescription = if (currentScreen.archived) "Restore" else "Archive"
+                            if (showArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                            contentDescription = if (showArchived) "Restore" else "Archive"
                         )
                     }
                     IconButton(onClick = {
@@ -276,7 +254,10 @@ fun HomeScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
         } else {
@@ -380,7 +361,8 @@ fun HomeContent(
     toggleSelection: (Long) -> Unit = { _ -> },
     selectedPassesIds: Set<Long> = emptySet(),
     isSelectionMode: Boolean = false,
-    archived: Boolean = false
+    archived: Boolean = false,
+    onArchiveFooterClick: () -> Unit = {}
 ) {
 
     val dao: BoardingPassDao = koinInject()
@@ -423,10 +405,16 @@ fun HomeContent(
             modifier = Modifier.padding(horizontal = 16.dp)
         ) {
             if (allPasses.isEmpty()) {
-                BoardingPassesPlaceholder(
-                    title = if (archived) "Archive is empty" else "No boarding passes yet",
-                    subtitle = if (archived) "Archived passes will show up here." else "Scan your first one to get started!"
-                )
+                Column {
+                    BoardingPassesPlaceholder(
+                        title = if (archived) "Archive is empty" else "No boarding passes yet",
+                        subtitle = if (archived) "Archived passes will show up here." else "Scan your first one to get started!"
+                    )
+                    ArchiveFooterButton(
+                        archived = archived,
+                        onClick = onArchiveFooterClick
+                    )
+                }
             } else if (passes.isEmpty()) {
                 Text("No results for \"$searchQuery\"")
             } else {
@@ -467,8 +455,39 @@ fun HomeContent(
                             selected = selectedPassesIds.contains(passId)
                         )
                     }
+                    item {
+                        ArchiveFooterButton(
+                            archived = archived,
+                            onClick = onArchiveFooterClick
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ArchiveFooterButton(
+    archived: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 96.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        TextButton(onClick = onClick) {
+            Icon(
+                if (archived) Icons.AutoMirrored.Outlined.AirplaneTicket else Icons.Outlined.Archive,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = if (archived) "Back to library" else "Archived passes",
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }
